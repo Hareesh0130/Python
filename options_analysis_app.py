@@ -47,29 +47,7 @@ def calculate_indicators(data):
     # VWAP
     data['VWAP'] = (data['Close'] * data['Volume']).cumsum() / data['Volume'].cumsum()
 
-    # Relative Volume
-    data['RVOL'] = data['Volume'] / data['Volume'].rolling(20).mean()
-
     return data
-
-# Function to detect trends and key levels
-def detect_trends(data):
-    local_max = argrelextrema(data['Close'].values, np.greater, order=5)[0]
-    local_min = argrelextrema(data['Close'].values, np.less, order=5)[0]
-
-    trend = "Sideways"
-    if len(local_max) > 1 and len(local_min) > 1:
-        last_high = data['Close'].iloc[local_max[-1]]
-        prev_high = data['Close'].iloc[local_max[-2]]
-        last_low = data['Close'].iloc[local_min[-1]]
-        prev_low = data['Close'].iloc[local_min[-2]]
-
-        if last_high > prev_high and last_low > prev_low:
-            trend = "Uptrend"
-        elif last_high < prev_high and last_low < prev_low:
-            trend = "Downtrend"
-
-    return local_max, local_min, trend
 
 # Recommendation System
 def generate_recommendation(data, trend, support, resistance):
@@ -78,7 +56,6 @@ def generate_recommendation(data, trend, support, resistance):
     macd = data['MACD'].iloc[-1]
     macd_signal = data['MACD_Signal'].iloc[-1]
     atr = data['ATR'].iloc[-1]
-    rvol = data['RVOL'].iloc[-1]
 
     score = 0
     signals = []
@@ -111,10 +88,6 @@ def generate_recommendation(data, trend, support, resistance):
         score -= 1
         signals.append("Near Resistance (-1)")
 
-    if rvol > 1.5:
-        score += 1
-        signals.append("Relative Volume: High (+1)")
-
     recommendation = "Hold"
     if score >= 5:
         recommendation = "Strong Buy"
@@ -146,7 +119,7 @@ def fetch_options_chain(symbol, current_price):
     return calls, puts
 
 # Streamlit App
-st.title("Comprehensive Stock Analysis with Options and Recommendations")
+st.title("Mobile-Friendly Stock Analysis Dashboard")
 
 ticker_input = st.text_input("Enter Stock Tickers (comma-separated, e.g., TSLA, AAPL):", "")
 if ticker_input:
@@ -157,7 +130,9 @@ if ticker_input:
         data, stock = get_stock_data(ticker)
         if not data.empty:
             data = calculate_indicators(data)
-            local_max, local_min, trend = detect_trends(data)
+            local_max = argrelextrema(data['Close'].values, np.greater, order=5)[0]
+            local_min = argrelextrema(data['Close'].values, np.less, order=5)[0]
+            trend = "Uptrend" if len(local_max) > len(local_min) else "Downtrend"
             live_price = data['Close'].iloc[-1]
             support = data['Close'].iloc[local_min].min() if len(local_min) > 0 else "N/A"
             resistance = data['Close'].iloc[local_max].max() if len(local_max) > 0 else "N/A"
@@ -169,33 +144,33 @@ if ticker_input:
                 "Ticker": ticker,
                 "Live Price": f"${live_price:.2f}",
                 "Trend": trend,
-                "Support": f"${support:.2f}",
-                "Resistance": f"${resistance:.2f}",
+                "Support": f"${support:.2f}" if support != "N/A" else "N/A",
+                "Resistance": f"${resistance:.2f}" if resistance != "N/A" else "N/A",
                 "RSI": f"{data['RSI'].iloc[-1]:.2f}",
                 "ATR": f"${data['ATR'].iloc[-1]:.2f}",
                 "Recommendation": recommendation
             })
 
-            # Display Top Call and Put Options and Chart
-            st.write(f"### Detailed Analysis for {ticker}")
-            st.write("#### Recommendation Signals")
-            for signal in signals:
-                st.write(f"- {signal}")
+            # Collapsible sections for detailed analysis
+            with st.expander(f"📊 Detailed Analysis for {ticker}"):
+                st.write("### Key Indicators")
+                st.write(f"**RSI**: {data['RSI'].iloc[-1]:.2f}")
+                st.write(f"**ATR**: ${data['ATR'].iloc[-1]:.2f}")
 
-            st.write("#### Stock Chart")
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name="Close Price"))
-            fig.add_trace(go.Scatter(x=data.index, y=data['MA10'], name="MA10", line=dict(dash="dot")))
-            fig.add_trace(go.Scatter(x=data.index, y=data['MA50'], name="MA50", line=dict(dash="dot")))
-            st.plotly_chart(fig)
+                st.write("### Stock Chart")
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name="Close Price"))
+                fig.add_trace(go.Scatter(x=data.index, y=data['MA10'], name="MA10", line=dict(dash="dot")))
+                fig.add_trace(go.Scatter(x=data.index, y=data['MA50'], name="MA50", line=dict(dash="dot")))
+                st.plotly_chart(fig)
 
-            st.write("#### Top Call Options")
-            st.dataframe(calls)
+                st.write("### Top Call Options")
+                st.dataframe(calls)
 
-            st.write("#### Top Put Options")
-            st.dataframe(puts)
+                st.write("### Top Put Options")
+                st.dataframe(puts)
 
     # Display Summary Table at the Top
-    st.write("## Summary Table")
+    st.write("## 📋 Summary Table")
     summary_df = pd.DataFrame(summary_data)
     st.dataframe(summary_df)
