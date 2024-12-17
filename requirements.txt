@@ -4,3 +4,6 @@ pandas
 matplotlib
 numpy
 scipy
+TextBlob
+argrelextrema
+plotly
