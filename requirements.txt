@@ -6,3 +6,10 @@ numpy
 scipy
 TextBlob
 plotly
+scikit-learn
+xgboost
+Sequential
+LSTM
+pmdarima
+statsmodels
+seaborn
