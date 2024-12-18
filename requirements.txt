@@ -13,4 +13,3 @@ LSTM
 pmdarima
 statsmodels
 seaborn
-ta-lib
