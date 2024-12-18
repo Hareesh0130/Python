@@ -65,18 +65,38 @@ def detect_support_resistance(data):
     resistance_levels = sorted(data['Close'].iloc[local_max].tail(3).values, reverse=True)
     return support_levels, resistance_levels
 
-# Predict next week's trend using ARIMA
-def predict_next_week(data):
+# Calculate Fibonacci retracement and extension levels
+def calculate_fibonacci(data):
+    high = data['Close'].max()
+    low = data['Close'].min()
+    diff = high - low
+    retracements = {
+        '0.0%': low,
+        '23.6%': low + 0.236 * diff,
+        '38.2%': low + 0.382 * diff,
+        '50.0%': low + 0.5 * diff,
+        '61.8%': low + 0.618 * diff,
+        '100.0%': high
+    }
+    extensions = {
+        '161.8%': high + 0.618 * diff,
+        '200.0%': high + diff,
+        '261.8%': high + 1.618 * diff
+    }
+    return retracements, extensions
+
+# Predict the next 3 weeks' trend using ARIMA
+def predict_next_3_weeks(data):
     try:
         close_data = data['Close'].dropna().reset_index(drop=True)
         if len(close_data) < 20:
-            return [close_data.iloc[-1]] * 7
+            return [close_data.iloc[-1]] * 21
         model = ARIMA(close_data, order=(5, 1, 0))
         model_fit = model.fit()
-        forecast = model_fit.forecast(steps=7)
+        forecast = model_fit.forecast(steps=21)
         return forecast.values
     except Exception:
-        return [data['Close'].iloc[-1]] * 7
+        return [data['Close'].iloc[-1]] * 21
 
 # Fetch options chain
 def fetch_options_chain(stock, live_price):
@@ -96,7 +116,7 @@ def fetch_options_chain(stock, live_price):
 
 # Streamlit App
 st.title("💰 Let’s Get That Money! 🚀")
-st.caption("The ultimate AI-powered stock analysis tool with candlestick trends, indicators, volume, and next week predictions.")
+st.caption("AI-powered stock analysis with candlestick visuals, indicators, volume, and 3-week predictions.")
 
 ticker_input = st.text_input("Enter Stock Ticker (e.g., TSLA, SPY):", "")
 if ticker_input:
@@ -104,36 +124,37 @@ if ticker_input:
     if not data.empty:
         data = calculate_indicators(data)
         support_levels, resistance_levels = detect_support_resistance(data)
-        predicted_trend = predict_next_week(data)
-        next_week_dates = pd.date_range(start=datetime.datetime.now(), periods=7)
+        retracements, extensions = calculate_fibonacci(data)
+        predicted_trend = predict_next_3_weeks(data)
+        next_week_dates = pd.date_range(start=datetime.datetime.now(), periods=21)
         calls, puts = fetch_options_chain(stock, live_price)
 
         # Trade Signal Summary
         st.write("## Trade Signal Summary")
         st.table(pd.DataFrame({
             "Live Price": [f"${live_price:.2f} (Pre/Post: ${pre_post_price:.2f})" if pre_post_price else f"${live_price:.2f}"],
-            "Next Week Trend (Avg)": [f"${np.mean(predicted_trend):.2f}"],
+            "Next 3 Weeks Trend (Avg)": [f"${np.mean(predicted_trend):.2f}"],
             "Signal": ["UPTREND" if predicted_trend[-1] > live_price else "DOWNTREND"],
             "Suggested Strike": [f"${round(np.mean(predicted_trend), 2)}"]
         }))
 
         # Stock Chart
-        st.write("### Stock Chart with Indicators and Next Week Trend")
+        st.write("### Stock Chart with Indicators and Next 3 Weeks Trend")
         fig = go.Figure()
         fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'],
                                      low=data['Low'], close=data['Close'], name="Candlestick"))
         fig.add_trace(go.Scatter(x=data.index, y=data['MA10'], name="MA10", line=dict(color="orange", dash="dot")))
         fig.add_trace(go.Scatter(x=data.index, y=data['MA50'], name="MA50", line=dict(color="red", dash="dot")))
-        fig.add_trace(go.Scatter(x=next_week_dates, y=predicted_trend, name="Next Week Trend", line=dict(color="green", dash="dash")))
+        fig.add_trace(go.Scatter(x=next_week_dates, y=predicted_trend, name="Next 3 Weeks Trend", line=dict(color="green", dash="dash")))
         st.plotly_chart(fig, use_container_width=True)
 
         # Top Call Options
         st.write("### Top Call Options")
-        st.table(calls[['strike', 'lastPrice', 'volume', 'openInterest', 'Expiration', 'lastTradeDate']])
+        st.table(calls[['strike', 'lastPrice', 'volume', 'openInterest', 'Expiration']])
 
         # Top Put Options
         st.write("### Top Put Options")
-        st.table(puts[['strike', 'lastPrice', 'volume', 'openInterest', 'Expiration', 'lastTradeDate']])
+        st.table(puts[['strike', 'lastPrice', 'volume', 'openInterest', 'Expiration']])
 
         # Support/Resistance Table
         st.write("### Support and Resistance Levels")
@@ -141,6 +162,5 @@ if ticker_input:
 
         # Fibonacci Table
         st.write("### Fibonacci Retracement and Extension Levels")
-        retracements, extensions = calculate_fibonacci(data)
         combined_fib = {**retracements, **extensions}
         st.table(pd.DataFrame(combined_fib.items(), columns=["Level", "Price"]))
