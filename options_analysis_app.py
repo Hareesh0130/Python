@@ -22,7 +22,6 @@ def get_stock_data(symbol, interval='1d', days=90):
 def calculate_indicators(data):
     data['MA10'] = data['Close'].rolling(10).mean()
     data['MA50'] = data['Close'].rolling(50).mean()
-    data['VWAP'] = (data['Close'] * data['Volume']).cumsum() / data['Volume'].cumsum()
     delta = data['Close'].diff(1)
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
@@ -31,9 +30,9 @@ def calculate_indicators(data):
     rs = avg_gain / avg_loss
     data['RSI'] = 100 - (100 / (1 + rs))
     data['ATR'] = (data['High'] - data['Low']).rolling(14).mean()
-    data['EMA12'] = data['Close'].ewm(span=12).mean()
-    data['EMA26'] = data['Close'].ewm(span=26).mean()
-    data['MACD'] = data['EMA12'] - data['EMA26']
+    data['Upper_BB'] = data['Close'].rolling(20).mean() + 2 * data['Close'].rolling(20).std()
+    data['Lower_BB'] = data['Close'].rolling(20).mean() - 2 * data['Close'].rolling(20).std()
+    data['MACD'] = data['Close'].ewm(span=12).mean() - data['Close'].ewm(span=26).mean()
     data['MACD_Signal'] = data['MACD'].ewm(span=9).mean()
     return data
 
@@ -59,7 +58,7 @@ def calculate_fibonacci(data):
         '100.0%': high
     }
 
-# Predict price using Machine Learning
+# Predict price using XGBoost
 def predict_with_xgboost(data):
     features = ['MA10', 'MA50', 'RSI', 'ATR', 'MACD', 'MACD_Signal']
     data = data.dropna()
@@ -74,56 +73,28 @@ def predict_with_xgboost(data):
     prediction = model.predict(next_day_features)
     return prediction[0]
 
-# Fetch options chain
-def fetch_options_chain(stock, live_price):
-    options = stock.option_chain()
-    calls = options.calls
-    puts = options.puts
-    expiry_date = stock.options[0]
-    lower_bound = live_price * 0.95
-    upper_bound = live_price * 1.05
-    calls = calls[(calls['strike'] >= lower_bound) & (calls['strike'] <= upper_bound)]
-    puts = puts[(puts['strike'] >= lower_bound) & (puts['strike'] <= upper_bound)]
-    return calls, puts, expiry_date
-
-# Sentiment analysis
-def fetch_sentiment(ticker):
-    api_key = "YOUR_NEWS_API_KEY"
-    url = f"https://newsapi.org/v2/everything?q={ticker}&apiKey={api_key}"
-    response = requests.get(url).json()
-    headlines = [article['title'] for article in response.get('articles', [])[:5]]
-    sentiment_score = sum([TextBlob(headline).sentiment.polarity for headline in headlines])
-    return "Positive" if sentiment_score > 0 else "Negative"
-
-# Trade signal generator
-def generate_trade_signal(data, calls, puts, predicted_price):
+# Generate trade signals
+def generate_trade_signal(data, predicted_price):
     live_price = data['Close'].iloc[-1]
     rsi = data['RSI'].iloc[-1]
     macd = data['MACD'].iloc[-1]
     macd_signal = data['MACD_Signal'].iloc[-1]
     atr = data['ATR'].iloc[-1]
 
-    signal = "HOLD"
-    strike_price = None
-    stop_loss = take_profit = None
-
     if predicted_price > live_price and macd > macd_signal and rsi < 70:
         signal = "BUY CALL"
-        strike_price = calls.iloc[0]['strike'] if not calls.empty else "N/A"
-        stop_loss = live_price - (1.5 * atr)
-        take_profit = live_price + (2 * atr)
-
     elif predicted_price < live_price and macd < macd_signal and rsi > 70:
         signal = "BUY PUT"
-        strike_price = puts.iloc[0]['strike'] if not puts.empty else "N/A"
-        stop_loss = live_price + (1.5 * atr)
-        take_profit = live_price - (2 * atr)
+    else:
+        signal = "HOLD"
 
-    return signal, strike_price, stop_loss, take_profit
+    stop_loss = live_price - (1.5 * atr) if signal == "BUY CALL" else live_price + (1.5 * atr)
+    take_profit = live_price + (2 * atr) if signal == "BUY CALL" else live_price - (2 * atr)
+    return signal, stop_loss, take_profit
 
 # Streamlit App
 st.title("💰 Let’s Get That Money! 🚀")
-st.caption("Stock signals, AI predictions, Fibonacci levels, and more – all in one place.")
+st.caption("AI predictions, signals, Fibonacci levels, and more – all in one place.")
 
 ticker_input = st.text_input("Enter Stock Tickers (comma-separated):", "")
 if ticker_input:
@@ -131,32 +102,40 @@ if ticker_input:
     for ticker in tickers:
         data, stock = get_stock_data(ticker)
         if not data.empty:
+            current_price = data['Close'].iloc[-1]
             data = calculate_indicators(data)
             support_levels, resistance_levels = detect_support_resistance(data)
             fib_levels = calculate_fibonacci(data)
             predicted_price = predict_with_xgboost(data)
-            calls, puts, expiry_date = fetch_options_chain(stock, data['Close'].iloc[-1])
-            signal, strike_price, stop_loss, take_profit = generate_trade_signal(data, calls, puts, predicted_price)
-            sentiment = fetch_sentiment(ticker)
+            signal, stop_loss, take_profit = generate_trade_signal(data, predicted_price)
 
             # Display Trade Signal
             st.write(f"## Trade Signal for {ticker}")
             st.table(pd.DataFrame({
+                "Current Price": [f"${current_price:.2f}"],
                 "Signal": [signal],
                 "Predicted Price": [f"${predicted_price:.2f}"],
-                "Strike Price": [strike_price],
-                "Stop Loss": [f"${stop_loss:.2f}" if stop_loss else "N/A"],
-                "Take Profit": [f"${take_profit:.2f}" if take_profit else "N/A"],
-                "Expiry Date": [expiry_date],
-                "Sentiment": [sentiment]
+                "Stop Loss": [f"${stop_loss:.2f}"],
+                "Take Profit": [f"${take_profit:.2f}"],
             }))
 
-            # Display Stock Chart
-            st.write("### Stock Chart")
+            # Enhanced Chart
+            st.write("### Stock Chart with Indicators")
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name="Close Price"))
-            for level in fib_levels.values():
-                fig.add_shape(type="line", y0=level, y1=level, x0=data.index[0], x1=data.index[-1], line=dict(color="purple", dash="dot"))
+            fig.add_trace(go.Scatter(x=data.index, y=data['Close'], name="Close Price", line=dict(color="blue")))
+            fig.add_trace(go.Scatter(x=data.index, y=data['MA10'], name="MA10", line=dict(color="orange", dash="dot")))
+            fig.add_trace(go.Scatter(x=data.index, y=data['MA50'], name="MA50", line=dict(color="red", dash="dot")))
+            fig.add_trace(go.Scatter(x=data.index, y=data['Upper_BB'], name="Upper BB", line=dict(color="purple", dash="dot")))
+            fig.add_trace(go.Scatter(x=data.index, y=data['Lower_BB'], name="Lower BB", line=dict(color="purple", dash="dot")))
+
+            # Add Support and Resistance Lines
+            for level in support_levels:
+                fig.add_shape(type="line", y0=level, y1=level, x0=data.index[0], x1=data.index[-1],
+                              line=dict(color="green", dash="dash"))
+            for level in resistance_levels:
+                fig.add_shape(type="line", y0=level, y1=level, x0=data.index[0], x1=data.index[-1],
+                              line=dict(color="red", dash="dash"))
+
             st.plotly_chart(fig, use_container_width=True)
 
             # Display Fibonacci Levels
@@ -166,10 +145,3 @@ if ticker_input:
             # Support and Resistance
             st.write("### Support and Resistance")
             st.table(pd.DataFrame({"Support": support_levels, "Resistance": resistance_levels}))
-
-            # Options Chain
-            st.write("### Top Call Options")
-            st.dataframe(calls)
-
-            st.write("### Top Put Options")
-            st.dataframe(puts)
